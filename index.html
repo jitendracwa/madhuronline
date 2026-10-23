@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transport Ledger Summary Dashboard</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SheetJS (xlsx) for reading and writing Excel files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        @media print {
+            body {
+                background: white !important;
+                padding: 0 !important;
+                color: black !important;
+            }
+            .no-print {
+                display: none !important;
+            }
+            #resultsContainer {
+                box-shadow: none !important;
+                border: none !important;
+                max-height: none !important;
+                overflow: visible !important;
+                width: 100% !important;
+            }
+            .overflow-x-auto, .max-h-\[500px\], .max-h-\[600px\] {
+                max-height: none !important;
+                overflow: visible !important;
+            }
+            #pdfHeaderBlock {
+                display: block !important;
+            }
+            table {
+                width: 100% !important;
+                border-collapse: collapse !important;
+                page-break-inside: auto;
+            }
+            tr {
+                page-break-inside: avoid;
+                page-break-after: auto;
+            }
+            thead {
+                display: table-header-group;
+            }
+            th, td {
+                border: 1px solid #000 !important;
+                padding: 6px !important;
+                font-size: 11px !important;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen p-6">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header with User Info & Logout -->
+        <div class="bg-blue-900 text-white p-6 rounded-xl shadow-lg mb-6 flex flex-col md:flex-row justify-between items-center no-print">
+            <div>
+                <h1 class="text-2xl font-bold">Transport Ledger Summary Tool</h1>
+                <p class="text-blue-200 text-sm mt-1">Logged in as: <span class="font-semibold underline">{{ user.username }}</span> {% if user.role == 'admin' %}(Admin){% endif %}</p>
+            </div>
+            <div class="mt-4 md:mt-0 flex gap-3 items-center">
+                {% if user.role == 'admin' %}
+                <a href="/admin" class="bg-amber-600 hover:bg-amber-500 text-white text-xs px-4 py-2 rounded-lg font-semibold shadow">Admin Panel</a>
+                {% endif %}
+                <a href="/logout" class="bg-red-600 hover:bg-red-500 text-white text-xs px-4 py-2 rounded-lg font-semibold shadow">Logout</a>
+            </div>
+        </div>
+
+        <!-- PDF Custom Title & Left Side Text Box Settings -->
+        <div class="bg-white p-6 rounded-xl shadow-md mb-6 border-l-4 border-blue-600 no-print">
+            <h2 class="text-md font-bold text-gray-800 mb-3">PDF Custom Header Settings</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">PDF Top Main Title (Bold):</label>
+                    <input type="text" id="pdfMainTitle" value="TRANSPORT LEDGER SUMMARY REPORT" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Left Side Box Text / Subtitle:</label>
+                    <input type="text" id="pdfLeftText" value="Branch: Chhindwara | Report Type: Summary Ledger" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500">
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Panel Card -->
+        <div class="bg-white p-6 rounded-xl shadow-md mb-6 grid grid-cols-1 md:grid-cols-3 gap-6 items-end no-print">
+            <!-- File Upload -->
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">1. Upload Excel File (.xlsx)</label>
+                <input type="file" id="excelFile" accept=".xlsx, .xls, .csv" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 border border-gray-300 rounded-lg cursor-pointer p-1">
+                <p id="filePathDisplay" class="text-xs text-blue-700 font-medium mt-1 truncate">File path: Koi file select nahi ki gayi</p>
+            </div>
+
+            <!-- Sheet Selector -->
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">2. Select Sheet</label>
+                <select id="sheetSelect" onchange="loadRawSheetData()" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm bg-white focus:ring-2 focus:ring-blue-500">
+                    <option value="">-- Pehle file upload karein --</option>
+                </select>
+            </div>
+
+            <!-- Grouping Option -->
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">3. Group Summary By</label>
+                <select id="groupBy" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm bg-white focus:ring-2 focus:ring-blue-500">
+                    <option value="Origin">Origin-wise (Bhejne wale sthan)</option>
+                    <option value="Destination City">Destination City-wise</option>
+                    <option value="Source Branch">Source Branch-wise</option>
+                    <option value="Origin_Destination">Origin + Destination City (Detailed)</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex flex-wrap gap-4 mb-6 no-print">
+            <button onclick="processData()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2.5 rounded-lg shadow transition text-sm flex items-center gap-2">
+                Generate Summary
+            </button>
+            <button id="downloadBtn" onclick="downloadExcel()" disabled class="bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white font-semibold px-6 py-2.5 rounded-lg shadow transition text-sm flex items-center gap-2">
+                Download Summary Excel
+            </button>
+            <button id="pdfBtn" onclick="generatePDF()" disabled class="bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white font-semibold px-6 py-2.5 rounded-lg shadow transition text-sm flex items-center gap-2">
+                Generate & Save PDF (Browse Path)
+            </button>
+        </div>
+
+        <!-- Raw Data Records Preview Section -->
+        <div id="rawRecordsContainer" class="bg-white rounded-xl shadow-md overflow-hidden mb-6 hidden no-print">
+            <div class="p-4 bg-amber-50 border-b border-amber-200 flex justify-between items-center">
+                <h3 class="font-bold text-amber-900 text-md">Uploaded File Raw Data Records (Preview)</h3>
+                <span id="rawRecordCount" class="bg-amber-200 text-amber-900 text-xs font-semibold px-2.5 py-1 rounded"></span>
+            </div>
+            <div class="overflow-x-auto max-h-[300px]">
+                <table id="rawTable" class="w-full text-left border-collapse text-xs">
+                    <thead class="bg-amber-100 text-amber-900 sticky top-0">
+                        <tr id="rawTableHeader"></tr>
+                    </thead>
+                    <tbody id="rawTableBody" class="divide-y divide-gray-200"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Summary Results Section -->
+        <div id="resultsContainer" class="bg-white rounded-xl shadow-md overflow-hidden hidden p-4">
+            <!-- Dynamic PDF Header -->
+            <div id="pdfHeaderBlock" class="mb-4">
+                <div id="displayPdfTitle" class="text-center text-xl font-bold text-black uppercase tracking-wide"></div>
+                <div class="my-2 border-b border-gray-400"></div>
+                <div id="displayPdfLeftText" class="text-left font-semibold text-sm text-gray-800 p-2 bg-gray-100 rounded border border-gray-300 inline-block"></div>
+                <div class="my-2 border-b border-gray-300"></div>
+            </div>
+
+            <div class="p-4 bg-gray-100 border-b border-gray-200 flex justify-between items-center no-print">
+                <h3 class="font-bold text-gray-800 text-lg">Summary Preview</h3>
+                <span id="recordCountBadge" class="bg-blue-100 text-blue-800 text-xs font-semibold px-2.5 py-1 rounded"></span>
+            </div>
+            <div class="overflow-x-auto max-h-[500px]">
+                <table id="summaryTable" class="w-full text-left border-collapse text-sm">
+                    <thead class="bg-gray-200 text-gray-700 sticky top-0">
+                        <tr id="tableHeader"></tr>
+                    </thead>
+                    <tbody id="tableBody" class="divide-y divide-gray-200"></tbody>
+                    <tfoot id="tableFoot" class="bg-gray-100 font-bold text-gray-900"></tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript Application Logic -->
+    <script>
+        let workbookData = null;
+        let lastSummaryResult = [];
+
+        function formatDate(val) {
+            if (!val) return "";
+            if (typeof val === 'number') {
+                const utc_days = Math.floor(val - 25569);
+                const utc_value = utc_days * 86400;
+                const date_info = new Date(utc_value * 1000);
+                const day = String(date_info.getDate()).padStart(2, '0');
+                const month = String(date_info.getMonth() + 1).padStart(2, '0');
+                const year = date_info.getFullYear();
+                return `${day}/${month}/${year}`;
+            }
+            let strVal = String(val).trim();
+            if (strVal.includes('-') || strVal.includes('/')) {
+                let parts = strVal.split(/[\/\-\s]/);
+                if (parts.length >= 3) {
+                    if (parts[0].length === 4) {
+                        return `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
+                    }
+                    return `${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[2]}`;
+                }
+            }
+            return strVal;
+        }
+
+        document.getElementById('excelFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            document.getElementById('filePathDisplay').textContent = "Selected File: " + file.name;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                workbookData = XLSX.read(data, {type: 'array'});
+                
+                const sheetSelect = document.getElementById('sheetSelect');
+                sheetSelect.innerHTML = '';
+                workbookData.SheetNames.forEach(sheetName => {
+                    let opt = document.createElement('option');
+                    opt.value = sheetName;
+                    opt.textContent = sheetName;
+                    sheetSelect.appendChild(opt);
+                });
+
+                loadRawSheetData();
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        function loadRawSheetData() {
+            if (!workbookData) return;
+            const sheetName = document.getElementById('sheetSelect').value;
+            const worksheet = workbookData.Sheets[sheetName];
+            const jsonData = XLSX.utils.sheet_to_json(worksheet, {defval: ""});
+
+            if (jsonData.length === 0) return;
+
+            const container = document.getElementById('rawRecordsContainer');
+            container.classList.remove('hidden');
+
+            const headerTr = document.getElementById('rawTableHeader');
+            const bodyTbody = document.getElementById('rawTableBody');
+            headerTr.innerHTML = '';
+            bodyTbody.innerHTML = '';
+
+            let columns = Object.keys(jsonData[0]);
+            columns = columns.filter(col => col.toLowerCase() !== 'time');
+
+            columns.forEach(col => {
+                let th = document.createElement('th');
+                th.className = "py-2 px-3 border-b font-semibold";
+                th.textContent = col;
+                headerTr.appendChild(th);
+            });
+
+            const previewRows = jsonData.slice(0, 50);
+            previewRows.forEach((row, idx) => {
+                let tr = document.createElement('tr');
+                tr.className = idx % 2 === 0 ? "bg-white" : "bg-amber-50/50";
+                columns.forEach(col => {
+                    let td = document.createElement('td');
+                    td.className = "py-2 px-3 border-b whitespace-nowrap";
+                    let val = row[col];
+                    if (col.toLowerCase() === 'date') {
+                        val = formatDate(val);
+                    }
+                    td.textContent = val !== undefined ? val : "";
+                    tr.appendChild(td);
+                });
+                bodyTbody.appendChild(tr);
+            });
+
+            document.getElementById('rawRecordCount').textContent = `Showing ${previewRows.length} of ${jsonData.length} Records Preview`;
+        }
+
+        function processData() {
+            if (!workbookData) {
+                alert('Kripya sabse pehle ek Excel file upload karein!');
+                return;
+            }
+
+            const sheetName = document.getElementById('sheetSelect').value;
+            const groupMode = document.getElementById('groupBy').value;
+            const worksheet = workbookData.Sheets[sheetName];
+            const jsonData = XLSX.utils.sheet_to_json(worksheet, {defval: ""});
+
+            if (jsonData.length === 0) {
+                alert('Chuni gayi sheet mein koi data nahi hai!');
+                return;
+            }
+
+            let groupedMap = {};
+
+            jsonData.forEach(row => {
+                let origin = String(row['Origin'] || row['origin'] || 'N/A').trim();
+                let dest = String(row['Destination City'] || row['Destination'] || row['destination_city'] || 'N/A').trim();
+                let srcBranch = String(row['Source Branch'] || row['source_branch'] || 'N/A').trim();
+                
+                let pcs = Number(row['PCs'] || row['pcs'] || row['Pcs'] || 0);
+                let weight = Number(row['Weight (Kgs)'] || row['Weight'] || row['weight'] || 0);
+                let amount = Number(row['Amount'] || row['amount'] || 0);
+                let topay = Number(row['ToPay Amount'] || row['ToPay'] || row['topay_amount'] || 0);
+
+                let key = "";
+                let col1 = "", col2 = "";
+
+                if (groupMode === 'Origin') {
+                    key = origin;
+                    col1 = origin;
+                } else if (groupMode === 'Destination City') {
+                    key = dest;
+                    col1 = dest;
+                } else if (groupMode === 'Source Branch') {
+                    key = srcBranch;
+                    col1 = srcBranch;
+                } else {
+                    key = origin + " | " + dest;
+                    col1 = origin;
+                    col2 = dest;
+                }
+
+                if (!groupedMap[key]) {
+                    groupedMap[key] = {
+                        col1: col1,
+                        col2: col2,
+                        total_pcs: 0,
+                        total_weight: 0,
+                        total_amount: 0,
+                        total_topay: 0,
+                        records: 0
+                    };
+                }
+
+                groupedMap[key].total_pcs += pcs;
+                groupedMap[key].total_weight += weight;
+                groupedMap[key].total_amount += amount;
+                groupedMap[key].total_topay += topay;
+                groupedMap[key].records += 1;
+            });
+
+            lastSummaryResult = [];
+            for (let k in groupedMap) {
+                lastSummaryResult.push(groupedMap[k]);
+            }
+
+            renderTable(groupMode, lastSummaryResult);
+            document.getElementById('downloadBtn').disabled = false;
+            document.getElementById('pdfBtn').disabled = false;
+        }
+
+        function renderTable(groupMode, data) {
+            const container = document.getElementById('resultsContainer');
+            container.classList.remove('hidden');
+            
+            const headerTr = document.getElementById('tableHeader');
+            const bodyTbody = document.getElementById('tableBody');
+            const footTfoot = document.getElementById('tableFoot');
+
+            headerTr.innerHTML = '';
+            bodyTbody.innerHTML = '';
+            footTfoot.innerHTML = '';
+
+            let headers = [];
+            if (groupMode === 'Origin') headers = ['Origin', 'Total PCs (Nag)', 'Total Weight (Kgs)', 'Amount', 'ToPay Amount', 'Records'];
+            else if (groupMode === 'Destination City') headers = ['Destination City', 'Total PCs (Nag)', 'Total Weight (Kgs)', 'Amount', 'ToPay Amount', 'Records'];
+            else if (groupMode === 'Source Branch') headers = ['Source Branch', 'Total PCs (Nag)', 'Total Weight (Kgs)', 'Amount', 'ToPay Amount', 'Records'];
+            else headers = ['Origin', 'Destination City', 'Total PCs (Nag)', 'Total Weight (Kgs)', 'Amount', 'ToPay Amount', 'Records'];
+
+            headers.forEach(h => {
+                let th = document.createElement('th');
+                th.className = "py-3 px-4 border-b font-semibold";
+                th.textContent = h;
+                headerTr.appendChild(th);
+            });
+
+            let sumPcs = 0, sumWeight = 0, sumAmount = 0, sumToPay = 0, sumRecords = 0;
+
+            data.forEach((item, idx) => {
+                let tr = document.createElement('tr');
+                tr.className = idx % 2 === 0 ? "bg-white hover:bg-gray-50" : "bg-gray-50 hover:bg-gray-100";
+
+                let rowHTML = '';
+                if (groupMode === 'Origin_Destination') {
+                    rowHTML = `
+                        <td class="py-2.5 px-4 border-b">${item.col1}</td>
+                        <td class="py-2.5 px-4 border-b">${item.col2}</td>
+                        <td class="py-2.5 px-4 border-b text-right">${item.total_pcs.toLocaleString()}</td>
+                        <td class="py-2.5 px-4 border-b text-right">${item.total_weight.toFixed(2)}</td>
+                        <td class="py-2.5 px-4 border-b text-right">${item.total_amount.toFixed(2)}</td>
+                        <td class="py-2.5 px-4 border-b text-right">${item.total_topay.toFixed(2)}</td>
+                        <td class="py-2.5 px-4 border-b text-right">${item.records}</td>
+                    `;
+                } else {
+                    rowHTML = `
+                        <td class="py-2.5 px-4 border-b font-medium">${item.col1}</td>
+                        <td class="py-2.5 px-4 border-b text-right">${item.total_pcs.toLocaleString()}</td>
+                        <td class="py-2.5 px-4 border-b text-right">${item.total_weight.toFixed(2)}</td>
+                        <td class="py-2.5 px-4 border-b text-right">${item.total_amount.toFixed(2)}</td>
+                        <td class="py-2.5 px-4 border-b text-right">${item.total_topay.toFixed(2)}</td>
+                        <td class="py-2.5 px-4 border-b text-right">${item.records}</td>
+                    `;
+                }
+                tr.innerHTML = rowHTML;
+                bodyTbody.appendChild(tr);
+
+                sumPcs += item.total_pcs;
+                sumWeight += item.total_weight;
+                sumAmount += item.total_amount;
+                sumToPay += item.total_topay;
+                sumRecords += item.records;
+            });
+
+            let footTr = document.createElement('tr');
+            if (groupMode === 'Origin_Destination') {
+                footTr.innerHTML = `
+                    <td class="py-3 px-4 border-t font-bold">Grand Total</td>
+                    <td class="py-3 px-4 border-t"></td>
+                    <td class="py-3 px-4 border-t text-right">${sumPcs.toLocaleString()}</td>
+                    <td class="py-3 px-4 border-t text-right">${sumWeight.toFixed(2)}</td>
+                    <td class="py-3 px-4 border-t text-right">${sumAmount.toFixed(2)}</td>
+                    <td class="py-3 px-4 border-t text-right">${sumToPay.toFixed(2)}</td>
+                    <td class="py-3 px-4 border-t text-right">${sumRecords}</td>
+                `;
+            } else {
+                footTr.innerHTML = `
+                    <td class="py-3 px-4 border-t font-bold">Grand Total</td>
+                    <td class="py-3 px-4 border-t text-right">${sumPcs.toLocaleString()}</td>
+                    <td class="py-3 px-4 border-t text-right">${sumWeight.toFixed(2)}</td>
+                    <td class="py-3 px-4 border-t text-right">${sumAmount.toFixed(2)}</td>
+                    <td class="py-3 px-4 border-t text-right">${sumToPay.toFixed(2)}</td>
+                    <td class="py-3 px-4 border-t text-right">${sumRecords}</td>
+                `;
+            }
+            footTfoot.appendChild(footTr);
+            document.getElementById('recordCountBadge').textContent = `${data.length} Summary Groups Found`;
+        }
+
+        function downloadExcel() {
+            if (lastSummaryResult.length === 0) return;
+
+            const groupMode = document.getElementById('groupBy').value;
+            let exportData = lastSummaryResult.map(item => {
+                if (groupMode === 'Origin_Destination') {
+                    return {
+                        "Origin": item.col1,
+                        "Destination City": item.col2,
+                        "Total PCs (Nag)": item.total_pcs,
+                        "Total Weight (Kgs)": Number(item.total_weight.toFixed(2)),
+                        "Amount": Number(item.total_amount.toFixed(2)),
+                        "ToPay Amount": Number(item.total_topay.toFixed(2)),
+                        "Records": item.records
+                    };
+                } else {
+                    let obj = {};
+                    if (groupMode === 'Origin') obj["Origin"] = item.col1;
+                    else if (groupMode === 'Destination City') obj["Destination City"] = item.col1;
+                    else obj["Source Branch"] = item.col1;
+
+                    obj["Total PCs (Nag)"] = item.total_pcs;
+                    obj["Total Weight (Kgs)"] = Number(item.total_weight.toFixed(2));
+                    obj["Amount"] = Number(item.total_amount.toFixed(2));
+                    obj["ToPay Amount"] = Number(item.total_topay.toFixed(2));
+                    obj["Records"] = item.records;
+                    return obj;
+                }
+            });
+
+            const worksheet = XLSX.utils.json_to_sheet(exportData);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "Summary Report");
+            XLSX.writeFile(workbook, "Transport_Summary_Report.xlsx");
+        }
+
+        function generatePDF() {
+            if (lastSummaryResult.length === 0) return;
+
+            const mainTitle = document.getElementById('pdfMainTitle').value || 'SUMMARY REPORT';
+            const leftText = document.getElementById('pdfLeftText').value || '';
+
+            document.getElementById('displayPdfTitle').textContent = mainTitle;
+            document.getElementById('displayPdfLeftText').textContent = leftText;
+
+            window.print();
+        }
+    </script>
+</body>
+</html>
